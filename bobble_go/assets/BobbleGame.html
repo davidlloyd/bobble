@@ -1,0 +1,345 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>BOBBLE</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            text-align: center;
+            background-color: white; /* Explicitly set background to white */
+            transition: background-color 0.5s ease;
+        }
+        h1 {
+            color: #4a4a4a;
+            font-size: 2.5em;
+            margin-bottom: 30px;
+        }
+        .controls {
+            margin-bottom: 20px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+        select, button, input {
+            padding: 8px 12px;
+            margin: 5px;
+            font-size: 16px;
+            border-radius: 4px;
+            border: 1px solid #ccc;
+        }
+        button {
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        .board {
+            display: grid;
+            gap: 10px;
+            margin: 20px auto;
+            max-width: 500px;
+        }
+        .cell {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            background-color: #f8f8f8;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            font-size: 24px;
+            font-weight: bold;
+            height: 60px;
+            user-select: none;
+            cursor: default;
+            transition: all 0.2s;
+        }
+        .cell:hover {
+            background-color: #e8e8e8;
+        }
+        .search-container {
+            margin-top: 30px;
+        }
+        #result {
+            margin-top: 20px;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .success {
+            background-color: #dff0d8;
+            color: #3c763d;
+            border: 1px solid #d6e9c6;
+        }
+        .error {
+            background-color: #f2dede;
+            color: #a94442;
+            border: 1px solid #ebccd1;
+        }
+        .hidden {
+            display: none;
+        }
+        .cell.highlight {
+            background-color: #ffeb3b;
+            border-color: #ffc107;
+        }
+        .timer {
+            font-size: 24px;
+            font-weight: bold;
+            color: #333;
+            background-color: #f0f0f0;
+            border-radius: 8px;
+            padding: 10px 20px;
+            margin-left: 15px;
+            display: inline-block;
+        }
+        .expired {
+            background-color: #e0e0e0; /* Light grey background when timer expires */
+        }
+    </style>
+</head>
+<body>
+    <h1>BOBBLE</h1>
+    
+    <div class="controls">
+        <label for="size">Board Size:</label>
+        <select id="size">
+            <option value="4">4×4</option>
+            <option value="5" selected>5×5</option>
+            <option value="6">6×6</option>
+            <option value="7">7×7</option>
+        </select>
+        <button id="newGame">New Game</button>
+        <div id="timer" class="timer">1:00</div>
+    </div>
+    
+    <div id="board" class="board"></div>
+    
+    <div class="search-container">
+        <input type="text" id="wordInput" placeholder="Enter a word to check" />
+        <button id="checkWord">Check Word</button>
+        <div id="result" class="hidden"></div>
+    </div>
+
+    <script>
+        let currentBoard = null;
+        let currentSize = 5;
+        let highlightedCells = [];
+        let timerInterval = null;
+        let secondsRemaining = 60; // 1 minute in seconds
+        let gameActive = false;
+
+        document.addEventListener('DOMContentLoaded', function() {
+            // Start a new game with default size
+            newGame();
+            
+            // Event listeners
+            document.getElementById('newGame').addEventListener('click', newGame);
+            document.getElementById('checkWord').addEventListener('click', checkWord);
+            document.getElementById('wordInput').addEventListener('keypress', function(e) {
+                if (e.key === 'Enter') {
+                    checkWord();
+                }
+            });
+        });
+
+        function newGame() {
+            // Get selected size
+            const sizeSelect = document.getElementById('size');
+            currentSize = sizeSelect.value;
+            
+            // Clear any previous results
+            clearResult();
+            
+            // Reset the game state
+            resetGameState();
+            
+            // Fetch new board from server
+            fetch(`/new?size=${currentSize}`)
+                .then(response => response.json())
+                .then(data => {
+                    currentBoard = data;
+                    renderBoard(data);
+                    
+                    // Start the timer after the board is rendered
+                    startTimer();
+                })
+                .catch(error => {
+                    console.error('Error creating new game:', error);
+                    showResult('Error creating new game. Please try again.', false);
+                });
+        }
+
+        function renderBoard(data) {
+            const boardElement = document.getElementById('board');
+            boardElement.innerHTML = '';
+            
+            // Set grid template based on board size
+            boardElement.style.gridTemplateColumns = `repeat(${data.size}, 1fr)`;
+            
+            // Create cells
+            for (let row = 0; row < data.size; row++) {
+                for (let col = 0; col < data.size; col++) {
+                    const cell = document.createElement('div');
+                    cell.className = 'cell';
+                    cell.dataset.row = row;
+                    cell.dataset.col = col;
+                    
+                    // Convert rune code to character
+                    const letter = String.fromCodePoint(data.board[row][col]);
+                    cell.textContent = letter === 'Q' ? 'Qu' : letter;
+                    
+                    boardElement.appendChild(cell);
+                }
+            }
+        }
+
+        function startTimer() {
+            // Reset timer
+            secondsRemaining = 60;
+            updateTimerDisplay();
+            
+            // Clear any existing timer
+            if (timerInterval) {
+                clearInterval(timerInterval);
+            }
+            
+            // Set game as active
+            gameActive = true;
+            document.body.classList.remove('expired');
+            
+            // Start new timer
+            timerInterval = setInterval(function() {
+                secondsRemaining--;
+                updateTimerDisplay();
+                
+                if (secondsRemaining <= 0) {
+                    endGame();
+                }
+            }, 1000);
+        }
+
+        function updateTimerDisplay() {
+            const minutes = Math.floor(secondsRemaining / 60);
+            const seconds = secondsRemaining % 60;
+            document.getElementById('timer').textContent = 
+                `${minutes}:${seconds < 10 ? '0' : ''}${seconds}`;
+        }
+
+        function endGame() {
+            // Stop the timer
+            clearInterval(timerInterval);
+            timerInterval = null;
+            
+            // Set game as inactive
+            gameActive = false;
+            
+            // Change background color to light grey
+            document.body.classList.add('expired');
+            
+            // Show alert
+            setTimeout(() => {
+                alert('Time has elapsed!');
+            }, 100);
+        }
+
+        function resetGameState() {
+            // Clear any existing timer
+            if (timerInterval) {
+                clearInterval(timerInterval);
+                timerInterval = null;
+            }
+            
+            // Reset timer display
+            document.getElementById('timer').textContent = '1:00';
+            
+            // Reset game active state
+            gameActive = false;
+            
+            // Ensure background is white
+            document.body.classList.remove('expired');
+        }
+
+        function checkWord() {
+            const wordInput = document.getElementById('wordInput');
+            const word = wordInput.value.trim().toUpperCase();
+            
+            if (!word) {
+                showResult('Please enter a word to check.', false);
+                return;
+            }
+            
+            // Clear previous highlights
+            clearHighlights();
+            
+            let boardString = "";
+            for (let row = 0; row < currentBoard.size; row++) {
+                for (let col = 0; col < currentBoard.size; col++) {
+                    const letter = String.fromCodePoint(currentBoard.board[row][col]);
+                    boardString = boardString + letter;
+                }
+            }
+
+            // Check the word with the server
+            fetch(`/check?word=${word}&size=${currentSize}&board=${boardString}`)
+                .then(response => response.json())
+                .then(data => {
+                    if (data.found) {
+                        showResult(`"${data.word}" is a valid word on the board!`, true);
+                        highlightPath(data.path);
+                    } else {
+                        showResult(`"${word}" is not a valid word on the board.`, false);
+                    }
+                })
+                .catch(error => {
+                    console.error('Error checking word:', error);
+                    showResult('Error checking word. Please try again.', false);
+                });
+        }
+
+        function showResult(message, success) {
+            const resultElement = document.getElementById('result');
+            resultElement.textContent = message;
+            resultElement.className = success ? 'success' : 'error';
+            resultElement.classList.remove('hidden');
+        }
+
+        function clearResult() {
+            const resultElement = document.getElementById('result');
+            resultElement.classList.add('hidden');
+            document.getElementById('wordInput').value = '';
+            clearHighlights();
+        }
+
+        function highlightPath(path) {
+            if (!path) return;
+            
+            const cells = document.querySelectorAll('.cell');
+            
+            path.forEach(pos => {
+                cells.forEach(cell => {
+                    if (parseInt(cell.dataset.row) === pos.row && 
+                        parseInt(cell.dataset.col) === pos.col) {
+                        cell.classList.add('highlight');
+                        highlightedCells.push(cell);
+                    }
+                });
+            });
+        }
+
+        function clearHighlights() {
+            highlightedCells.forEach(cell => {
+                cell.classList.remove('highlight');
+            });
+            highlightedCells = [];
+        }
+    </script>
+</body>
+</html>
